@@ -52,7 +52,7 @@ jobs:
 
       - name: Zip asset
         shell: pwsh
-        run: Compress-Archive -Path staging\* -DestinationPath ${env:ASSET_NAME}.zip
+        run: Compress-Archive -Path staging\* -DestinationPath ${{ env.ASSET_NAME }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
