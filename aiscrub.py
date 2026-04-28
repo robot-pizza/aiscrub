@@ -39,7 +39,7 @@ _AT = r"[@＠]"                                     # @ ＠
 _LBRACK = r"[\[\(【［]?"                       # optional [ ( 【 ［
 _RBRACK = r"[\]\)】］]?"                       # optional ] ) 】 ］
 _WS = r"[ \t ​]*"                           # space, tab, NBSP, ZWSP
-_BOT = r"(?:\U0001F916|:robot:|:robot_face:)"
+_BOT = r"(?:🤖|:robot:|:robot_face:)"
 
 AI_AUTHOR_NAME = "Claude"
 AI_AUTHOR_EMAIL = "noreply@anthropic.com"
