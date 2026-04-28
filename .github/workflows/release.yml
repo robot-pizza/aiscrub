@@ -15,29 +15,17 @@ permissions:
 
 jobs:
   build:
-    name: build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            asset_name: aiscrub-linux-x86_64
-            bin_name: aiscrub
-          - os: macos-latest
-            asset_name: aiscrub-macos-arm64
-            bin_name: aiscrub
-          - os: windows-latest
-            asset_name: aiscrub-windows-x86_64
-            bin_name: aiscrub.exe
-
+    name: build (windows)
+    runs-on: windows-latest
+    env:
+      ASSET_NAME: aiscrub-windows-x86_64
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up Python
         run: uv python install 3.12
@@ -58,32 +46,19 @@ jobs:
         shell: bash
         run: |
           mkdir -p staging
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp dist/aiscrub.exe staging/${{ matrix.bin_name }}
-          else
-            cp dist/aiscrub staging/${{ matrix.bin_name }}
-            chmod +x staging/${{ matrix.bin_name }}
-          fi
+          cp dist/aiscrub.exe staging/aiscrub.exe
           cp README.md staging/ 2>/dev/null || true
           cp LICENSE staging/ 2>/dev/null || true
 
-      - name: Zip asset (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: |
-          cd staging
-          zip -r ../${{ matrix.asset_name }}.zip .
-
-      - name: Zip asset (Windows)
-        if: runner.os == 'Windows'
+      - name: Zip asset
         shell: pwsh
-        run: |
-          Compress-Archive -Path staging\* -DestinationPath ${{ matrix.asset_name }}.zip
+        run: Compress-Archive -Path staging\* -DestinationPath ${env:ASSET_NAME}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ matrix.asset_name }}.zip
+          name: ${{ env.ASSET_NAME }}
+          path: ${{ env.ASSET_NAME }}.zip
           if-no-files-found: error
 
   release:
@@ -93,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -110,6 +85,9 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: ${{ github.event.inputs.tag || github.ref_name }}
           generate_release_notes: true
+          body: |
+            Windows binary release. Source is available in this repository — see
+            the README for build-from-source instructions on other platforms.
           files: |
             artifacts/**/*.zip
             SHA256SUMS.txt
