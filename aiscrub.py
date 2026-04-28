@@ -7,9 +7,11 @@ Subcommands:
          (Claude, Copilot, Cursor, ChatGPT, Aider, Cody, Codeium, Devin,
          Gemini, Tabnine, JetBrains AI, Continue, generic "by AI"...).
          Pass --kill-all-humans to instead leave ONLY AI attribution:
-         replace author/committer with the AI identity, drop EVERY
-         Co-Authored-By trailer (human or AI), and append the canonical
-         "Authored-By: Claude" trailer to every commit.
+         replace author/committer with the AI identity, drop human
+         Co-Authored-By trailers, transform AI Co-Authored-By to
+         Authored-By (Claude is now THE author, not a co-author), and
+         append the canonical "Authored-By: Claude" trailer to every
+         commit that does not already have it.
          Dry-run by default; pass --not-dry-run to actually mutate.
   dirty  Rewrite history to ADD an attribution trailer to every commit
          that does not already have it. Default trailer attributes Claude;
@@ -45,19 +47,19 @@ AI_AUTHOR_NAME = "Claude"
 AI_AUTHOR_EMAIL = "noreply@anthropic.com"
 
 COAUTHOR_PATTERN = re.compile(
-    rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}.*$",
+    rf"^{_WS}(?:Co{_DASH})?Authored{_DASH}By{_COLON}.*$",
     re.IGNORECASE,
 )
 
 CLAUDE_PATTERNS = [
     # Co-authored-by trailer naming Claude.
     re.compile(
-        rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}{_WS}.*\bClaude\b.*$",
+        rf"^{_WS}(?:Co{_DASH})?Authored{_DASH}By{_COLON}{_WS}.*\bClaude\b.*$",
         re.IGNORECASE,
     ),
     # Co-authored-by trailer with an @anthropic.com address (any name).
     re.compile(
-        rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}.*{_AT}anthropic\.com>?{_WS}$",
+        rf"^{_WS}(?:Co{_DASH})?Authored{_DASH}By{_COLON}.*{_AT}anthropic\.com>?{_WS}$",
         re.IGNORECASE,
     ),
     # "Generated with / by / using Claude [Code]" and similar phrasings.
@@ -94,11 +96,11 @@ CLAUDE_PATTERNS = [
 OTHER_AI_PATTERNS = [
     # GitHub Copilot — bot account names and Copilot-specific phrasings.
     re.compile(
-        rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}.*\bCopilot\b.*$",
+        rf"^{_WS}(?:Co{_DASH})?Authored{_DASH}By{_COLON}.*\bCopilot\b.*$",
         re.IGNORECASE,
     ),
     re.compile(
-        rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}.*\b(?:copilot{_DASH}swe{_DASH}agent|github{_DASH}copilot)\b.*$",
+        rf"^{_WS}(?:Co{_DASH})?Authored{_DASH}By{_COLON}.*\b(?:copilot{_DASH}swe{_DASH}agent|github{_DASH}copilot)\b.*$",
         re.IGNORECASE,
     ),
     re.compile(
@@ -114,7 +116,7 @@ OTHER_AI_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(
-        rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}.*{_AT}cursor\.(?:sh|com|so)>?.*$",
+        rf"^{_WS}(?:Co{_DASH})?Authored{_DASH}By{_COLON}.*{_AT}cursor\.(?:sh|com|so)>?.*$",
         re.IGNORECASE,
     ),
 
@@ -125,13 +127,13 @@ OTHER_AI_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(
-        rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}.*{_AT}openai\.com>?.*$",
+        rf"^{_WS}(?:Co{_DASH})?Authored{_DASH}By{_COLON}.*{_AT}openai\.com>?.*$",
         re.IGNORECASE,
     ),
 
     # Aider (terminal coding agent).
     re.compile(
-        rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}.*\baider\b.*$",
+        rf"^{_WS}(?:Co{_DASH})?Authored{_DASH}By{_COLON}.*\baider\b.*$",
         re.IGNORECASE,
     ),
     re.compile(r"^.*\baider(?:\.chat)?\b.*\bcommit\b.*$", re.IGNORECASE),
@@ -143,7 +145,7 @@ OTHER_AI_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(
-        rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}.*{_AT}sourcegraph\.com>?.*$",
+        rf"^{_WS}(?:Co{_DASH})?Authored{_DASH}By{_COLON}.*{_AT}sourcegraph\.com>?.*$",
         re.IGNORECASE,
     ),
 
@@ -161,7 +163,7 @@ OTHER_AI_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(
-        rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}.*{_AT}cognition(?:labs)?\.ai>?.*$",
+        rf"^{_WS}(?:Co{_DASH})?Authored{_DASH}By{_COLON}.*{_AT}cognition(?:labs)?\.ai>?.*$",
         re.IGNORECASE,
     ),
 
@@ -384,14 +386,13 @@ DEFAULT_ATTRIBUTION = (
     "Co-Authored-By: Claude <noreply@anthropic.com>"
 )
 
-KILL_ATTRIBUTION = (
-    "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
-    "\n"
-    "Authored-By: Claude <noreply@anthropic.com>"
+KILL_ATTRIBUTION = "Authored-By: Claude <noreply@anthropic.com>"
+KILL_SIGNATURE = KILL_ATTRIBUTION
+KILL_TRAILER_RE = re.compile(
+    r"^\s*Authored-By:\s*Claude\s*<noreply@anthropic\.com>",
+    re.IGNORECASE,
 )
-
-KILL_SIGNATURE = "Authored-By: Claude <noreply@anthropic.com>"
-KILL_TRAILER_RE = re.compile(r"^\s*Authored-By:\s*Claude\s*<", re.IGNORECASE)
+STRIP_CO_PATTERN = rf"^({_WS})Co{_DASH}(?=Authored{_DASH}By)"
 
 
 def attribution_signature(attribution: str) -> str:
@@ -756,10 +757,12 @@ KILL_WARNING_BANNER = """
 This will:
   * Replace author/committer with the AI identity
     (Claude <noreply@anthropic.com>) on EVERY commit.
-  * Drop EVERY Co-Authored-By trailer (human or AI) — Claude
-    is now THE author, not a co-author.
+  * Drop every HUMAN Co-Authored-By trailer.
+  * Transform every AI Co-Authored-By trailer to Authored-By
+    (Claude is now THE author, not a co-author).
+  * Strip non-trailer AI attribution lines from messages.
   * Append the canonical "Authored-By: Claude" trailer to
-    every commit.
+    every commit that does not already have it.
   * Change commit SHAs across the entire repo.
 
 Same consequences as `scrub`: divergent clones, broken open
@@ -771,25 +774,36 @@ PRs, moved tags, lost signatures.
 def kill_all_humans_filter_repo() -> None:
     patterns_literal = _patterns_as_bytes_literal()
     coauthor_src = repr(COAUTHOR_PATTERN.pattern.encode("utf-8"))
+    strip_co_src = repr(STRIP_CO_PATTERN.encode("utf-8"))
+    kill_trailer_src = repr(KILL_TRAILER_RE.pattern.encode("utf-8"))
     kill_attribution_bytes = repr(KILL_ATTRIBUTION.encode("utf-8"))
     script = (
         "import re\n"
         f"PATTERNS = {patterns_literal}\n"
         f"COAUTHOR_RE = re.compile({coauthor_src}, re.IGNORECASE | re.MULTILINE)\n"
+        f"STRIP_CO_RE = re.compile({strip_co_src}, re.IGNORECASE)\n"
+        f"KILL_TRAILER_RE = re.compile({kill_trailer_src}, re.IGNORECASE | re.MULTILINE)\n"
         f"AI_NAME = {AI_AUTHOR_NAME.encode('utf-8')!r}\n"
         f"AI_EMAIL = {AI_AUTHOR_EMAIL.encode('utf-8')!r}\n"
         f"KILL_ATTRIBUTION = {kill_attribution_bytes}\n"
         "msg = commit.message\n"
         "kept = []\n"
         "for line in msg.split(b'\\n'):\n"
-        "    if COAUTHOR_RE.match(line) is not None:\n"
+        "    is_trailer = COAUTHOR_RE.match(line) is not None\n"
+        "    is_ai = any(p.search(line) for p in PATTERNS)\n"
+        "    if is_trailer:\n"
+        "        if is_ai:\n"
+        "            kept.append(STRIP_CO_RE.sub(b'\\\\1', line))\n"
         "        continue\n"
-        "    if any(p.search(line) for p in PATTERNS):\n"
+        "    if is_ai:\n"
         "        continue\n"
         "    kept.append(line)\n"
         "msg = b'\\n'.join(kept)\n"
         "msg = re.sub(rb'\\n{3,}', b'\\n\\n', msg)\n"
-        "msg = msg.rstrip(b'\\n') + b'\\n\\n' + KILL_ATTRIBUTION + b'\\n'\n"
+        "if KILL_TRAILER_RE.search(msg) is None:\n"
+        "    msg = msg.rstrip(b'\\n') + b'\\n\\n' + KILL_ATTRIBUTION + b'\\n'\n"
+        "else:\n"
+        "    msg = msg.rstrip(b'\\n') + b'\\n'\n"
         "commit.message = msg\n"
         "commit.author_name = AI_NAME\n"
         "commit.author_email = AI_EMAIL\n"
@@ -814,23 +828,34 @@ def kill_all_humans_filter_repo() -> None:
 def kill_all_humans_filter_branch() -> None:
     patterns_literal = _patterns_as_bytes_literal()
     coauthor_src = repr(COAUTHOR_PATTERN.pattern.encode("utf-8"))
+    strip_co_src = repr(STRIP_CO_PATTERN.encode("utf-8"))
+    kill_trailer_src = repr(KILL_TRAILER_RE.pattern.encode("utf-8"))
     kill_attribution_bytes = repr(KILL_ATTRIBUTION.encode("utf-8"))
     helper_src = (
         "import sys, re\n"
         f"PATTERNS = {patterns_literal}\n"
         f"COAUTHOR_RE = re.compile({coauthor_src}, re.IGNORECASE | re.MULTILINE)\n"
+        f"STRIP_CO_RE = re.compile({strip_co_src}, re.IGNORECASE)\n"
+        f"KILL_TRAILER_RE = re.compile({kill_trailer_src}, re.IGNORECASE | re.MULTILINE)\n"
         f"KILL_ATTRIBUTION = {kill_attribution_bytes}\n"
         "data = sys.stdin.buffer.read()\n"
         "kept = []\n"
         "for line in data.split(b'\\n'):\n"
-        "    if COAUTHOR_RE.match(line) is not None:\n"
+        "    is_trailer = COAUTHOR_RE.match(line) is not None\n"
+        "    is_ai = any(p.search(line) for p in PATTERNS)\n"
+        "    if is_trailer:\n"
+        "        if is_ai:\n"
+        "            kept.append(STRIP_CO_RE.sub(b'\\\\1', line))\n"
         "        continue\n"
-        "    if any(p.search(line) for p in PATTERNS):\n"
+        "    if is_ai:\n"
         "        continue\n"
         "    kept.append(line)\n"
         "data = b'\\n'.join(kept)\n"
         "data = re.sub(rb'\\n{3,}', b'\\n\\n', data)\n"
-        "data = data.rstrip(b'\\n') + b'\\n\\n' + KILL_ATTRIBUTION + b'\\n'\n"
+        "if KILL_TRAILER_RE.search(data) is None:\n"
+        "    data = data.rstrip(b'\\n') + b'\\n\\n' + KILL_ATTRIBUTION + b'\\n'\n"
+        "else:\n"
+        "    data = data.rstrip(b'\\n') + b'\\n'\n"
         "sys.stdout.buffer.write(data)\n"
     )
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
@@ -874,6 +899,8 @@ def cmd_kill_all_humans(args: argparse.Namespace) -> int:
     fmt = f"%H%n%an <%ae>%n%s%n%B%n{sep}"
     r = run(["git", "log", "--all", f"--pretty=format:{fmt}"])
 
+    strip_co_re = re.compile(STRIP_CO_PATTERN, re.IGNORECASE)
+
     affected = []
     for chunk in r.stdout.split(sep + "\n"):
         chunk = chunk.strip("\n")
@@ -887,16 +914,35 @@ def cmd_kill_all_humans(args: argparse.Namespace) -> int:
         subject = lines[2]
         body_lines = lines[3:]
 
-        coauthors = [ln for ln in body_lines if COAUTHOR_PATTERN.match(ln)]
-        has_kill = any(KILL_TRAILER_RE.match(ln) for ln in body_lines)
+        drops: list[str] = []
+        transforms: list[tuple[str, str]] = []
+        non_trailer_ai: list[str] = []
+        for ln in body_lines:
+            is_trailer = COAUTHOR_PATTERN.match(ln) is not None
+            is_ai = line_matches(ln)
+            if is_trailer:
+                if is_ai:
+                    new_ln = strip_co_re.sub(r"\1", ln)
+                    if new_ln != ln:
+                        transforms.append((ln, new_ln))
+                else:
+                    drops.append(ln)
+            elif is_ai:
+                non_trailer_ai.append(ln)
+
+        has_kill = any(KILL_TRAILER_RE.match(ln) for ln in body_lines) or any(
+            KILL_TRAILER_RE.match(new_ln) for _, new_ln in transforms
+        )
         author_changes = author != ai_author_str
 
-        if author_changes or coauthors or not has_kill:
+        if author_changes or drops or transforms or non_trailer_ai or not has_kill:
             affected.append({
                 "sha": sha,
                 "author": author,
                 "subject": subject,
-                "coauthors": coauthors,
+                "drops": drops,
+                "transforms": transforms,
+                "non_trailer_ai": non_trailer_ai,
                 "has_kill": has_kill,
                 "author_changes": author_changes,
             })
@@ -907,11 +953,16 @@ def cmd_kill_all_humans(args: argparse.Namespace) -> int:
         for c in affected:
             print(f"  {c['sha'][:12]} {c['subject']}")
             if c['author_changes']:
-                print(f"      author: {c['author']} -> {ai_author_str}")
-            for ln in c['coauthors']:
-                print(f"      drop:   {ln}")
+                print(f"      author:    {c['author']} -> {ai_author_str}")
+            for ln in c['drops']:
+                print(f"      drop:      {ln}")
+            for old, new in c['transforms']:
+                print(f"      transform: {old}")
+                print(f"            ->   {new}")
+            for ln in c['non_trailer_ai']:
+                print(f"      strip:     {ln}")
             if not c['has_kill']:
-                print(f"      add:    {kill_signature}")
+                print(f"      add:       {kill_signature}")
         print("\nRe-run with --not-dry-run to apply.")
         return 0
 
@@ -1032,9 +1083,10 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "instead of removing AI attributions, leave ONLY the AI: "
-            "replace author/committer with the AI identity, drop EVERY "
-            "Co-Authored-By trailer, and append the canonical "
-            "'Authored-By: Claude' trailer to every commit"
+            "replace author/committer with the AI identity, drop human "
+            "Co-Authored-By trailers, transform AI Co-Authored-By to "
+            "Authored-By, and append the canonical 'Authored-By: Claude' "
+            "trailer to every commit that does not already have it"
         ),
     )
     sp_scrub.set_defaults(func=cmd_scrub)
