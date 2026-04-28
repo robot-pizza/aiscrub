@@ -1,4 +1,4 @@
-# aiscrub
+# aiscrub - Take credit for AI work
 
 Find and remove **AI attributions** from a git repo — both commit messages
 across every ref, and tracked files in the working tree. Optionally do the
