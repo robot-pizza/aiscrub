@@ -7,9 +7,9 @@ Subcommands:
          (Claude, Copilot, Cursor, ChatGPT, Aider, Cody, Codeium, Devin,
          Gemini, Tabnine, JetBrains AI, Continue, generic "by AI"...).
          Pass --kill-all-humans to instead leave ONLY AI attribution:
-         replace author/committer with the AI default identity, drop
-         human Co-Authored-By trailers, and substitute the default AI
-         trailer when a commit has no AI attribution at all.
+         replace author/committer with the AI identity, drop EVERY
+         Co-Authored-By trailer (human or AI), and append the canonical
+         "Authored-By: Claude" trailer to every commit.
          Dry-run by default; pass --not-dry-run to actually mutate.
   dirty  Rewrite history to ADD an attribution trailer to every commit
          that does not already have it. Default trailer attributes Claude;
@@ -384,6 +384,15 @@ DEFAULT_ATTRIBUTION = (
     "Co-Authored-By: Claude <noreply@anthropic.com>"
 )
 
+KILL_ATTRIBUTION = (
+    "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+    "\n"
+    "Authored-By: Claude <noreply@anthropic.com>"
+)
+
+KILL_SIGNATURE = "Authored-By: Claude <noreply@anthropic.com>"
+KILL_TRAILER_RE = re.compile(r"^\s*Authored-By:\s*Claude\s*<", re.IGNORECASE)
+
 
 def attribution_signature(attribution: str) -> str:
     """Pick a stable identifying line from the attribution block — used as a
@@ -745,11 +754,12 @@ KILL_WARNING_BANNER = """
   DESTRUCTIVE OPERATION — REWRITES GIT HISTORY
 ============================================================
 This will:
-  * Replace author/committer with the AI default identity
+  * Replace author/committer with the AI identity
     (Claude <noreply@anthropic.com>) on EVERY commit.
-  * Drop every human Co-Authored-By trailer.
-  * Append a default AI trailer to any commit that has no
-    AI attribution at all.
+  * Drop EVERY Co-Authored-By trailer (human or AI) — Claude
+    is now THE author, not a co-author.
+  * Append the canonical "Authored-By: Claude" trailer to
+    every commit.
   * Change commit SHAs across the entire repo.
 
 Same consequences as `scrub`: divergent clones, broken open
@@ -761,31 +771,25 @@ PRs, moved tags, lost signatures.
 def kill_all_humans_filter_repo() -> None:
     patterns_literal = _patterns_as_bytes_literal()
     coauthor_src = repr(COAUTHOR_PATTERN.pattern.encode("utf-8"))
-    default_attribution_bytes = repr(DEFAULT_ATTRIBUTION.encode("utf-8"))
+    kill_attribution_bytes = repr(KILL_ATTRIBUTION.encode("utf-8"))
     script = (
         "import re\n"
         f"PATTERNS = {patterns_literal}\n"
         f"COAUTHOR_RE = re.compile({coauthor_src}, re.IGNORECASE | re.MULTILINE)\n"
         f"AI_NAME = {AI_AUTHOR_NAME.encode('utf-8')!r}\n"
         f"AI_EMAIL = {AI_AUTHOR_EMAIL.encode('utf-8')!r}\n"
-        f"DEFAULT_ATTRIBUTION = {default_attribution_bytes}\n"
+        f"KILL_ATTRIBUTION = {kill_attribution_bytes}\n"
         "msg = commit.message\n"
         "kept = []\n"
-        "has_ai = False\n"
         "for line in msg.split(b'\\n'):\n"
-        "    is_coauthor = COAUTHOR_RE.match(line) is not None\n"
-        "    is_ai = any(p.search(line) for p in PATTERNS)\n"
-        "    if is_ai:\n"
-        "        has_ai = True\n"
-        "    if is_coauthor and not is_ai:\n"
+        "    if COAUTHOR_RE.match(line) is not None:\n"
+        "        continue\n"
+        "    if any(p.search(line) for p in PATTERNS):\n"
         "        continue\n"
         "    kept.append(line)\n"
         "msg = b'\\n'.join(kept)\n"
         "msg = re.sub(rb'\\n{3,}', b'\\n\\n', msg)\n"
-        "if not has_ai:\n"
-        "    msg = msg.rstrip(b'\\n') + b'\\n\\n' + DEFAULT_ATTRIBUTION + b'\\n'\n"
-        "else:\n"
-        "    msg = msg.rstrip(b'\\n') + b'\\n'\n"
+        "msg = msg.rstrip(b'\\n') + b'\\n\\n' + KILL_ATTRIBUTION + b'\\n'\n"
         "commit.message = msg\n"
         "commit.author_name = AI_NAME\n"
         "commit.author_email = AI_EMAIL\n"
@@ -810,29 +814,23 @@ def kill_all_humans_filter_repo() -> None:
 def kill_all_humans_filter_branch() -> None:
     patterns_literal = _patterns_as_bytes_literal()
     coauthor_src = repr(COAUTHOR_PATTERN.pattern.encode("utf-8"))
-    default_attribution_bytes = repr(DEFAULT_ATTRIBUTION.encode("utf-8"))
+    kill_attribution_bytes = repr(KILL_ATTRIBUTION.encode("utf-8"))
     helper_src = (
         "import sys, re\n"
         f"PATTERNS = {patterns_literal}\n"
         f"COAUTHOR_RE = re.compile({coauthor_src}, re.IGNORECASE | re.MULTILINE)\n"
-        f"DEFAULT_ATTRIBUTION = {default_attribution_bytes}\n"
+        f"KILL_ATTRIBUTION = {kill_attribution_bytes}\n"
         "data = sys.stdin.buffer.read()\n"
         "kept = []\n"
-        "has_ai = False\n"
         "for line in data.split(b'\\n'):\n"
-        "    is_coauthor = COAUTHOR_RE.match(line) is not None\n"
-        "    is_ai = any(p.search(line) for p in PATTERNS)\n"
-        "    if is_ai:\n"
-        "        has_ai = True\n"
-        "    if is_coauthor and not is_ai:\n"
+        "    if COAUTHOR_RE.match(line) is not None:\n"
+        "        continue\n"
+        "    if any(p.search(line) for p in PATTERNS):\n"
         "        continue\n"
         "    kept.append(line)\n"
         "data = b'\\n'.join(kept)\n"
         "data = re.sub(rb'\\n{3,}', b'\\n\\n', data)\n"
-        "if not has_ai:\n"
-        "    data = data.rstrip(b'\\n') + b'\\n\\n' + DEFAULT_ATTRIBUTION + b'\\n'\n"
-        "else:\n"
-        "    data = data.rstrip(b'\\n') + b'\\n'\n"
+        "data = data.rstrip(b'\\n') + b'\\n\\n' + KILL_ATTRIBUTION + b'\\n'\n"
         "sys.stdout.buffer.write(data)\n"
     )
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
@@ -870,6 +868,7 @@ def cmd_kill_all_humans(args: argparse.Namespace) -> int:
 
     dry_run = not args.not_dry_run
     ai_author_str = f"{AI_AUTHOR_NAME} <{AI_AUTHOR_EMAIL}>"
+    kill_signature = KILL_SIGNATURE
 
     sep = "<<<COMMIT-BOUNDARY>>>"
     fmt = f"%H%n%an <%ae>%n%s%n%B%n{sep}"
@@ -888,17 +887,17 @@ def cmd_kill_all_humans(args: argparse.Namespace) -> int:
         subject = lines[2]
         body_lines = lines[3:]
 
-        human_coauthors = [ln for ln in body_lines if line_is_human_coauthor(ln)]
-        has_ai = any(line_matches(ln) for ln in body_lines)
+        coauthors = [ln for ln in body_lines if COAUTHOR_PATTERN.match(ln)]
+        has_kill = any(KILL_TRAILER_RE.match(ln) for ln in body_lines)
         author_changes = author != ai_author_str
 
-        if author_changes or human_coauthors or not has_ai:
+        if author_changes or coauthors or not has_kill:
             affected.append({
                 "sha": sha,
                 "author": author,
                 "subject": subject,
-                "human_coauthors": human_coauthors,
-                "has_ai": has_ai,
+                "coauthors": coauthors,
+                "has_kill": has_kill,
                 "author_changes": author_changes,
             })
 
@@ -909,10 +908,10 @@ def cmd_kill_all_humans(args: argparse.Namespace) -> int:
             print(f"  {c['sha'][:12]} {c['subject']}")
             if c['author_changes']:
                 print(f"      author: {c['author']} -> {ai_author_str}")
-            for ln in c['human_coauthors']:
+            for ln in c['coauthors']:
                 print(f"      drop:   {ln}")
-            if not c['has_ai']:
-                print(f"      add:    {attribution_signature(DEFAULT_ATTRIBUTION)}")
+            if not c['has_kill']:
+                print(f"      add:    {kill_signature}")
         print("\nRe-run with --not-dry-run to apply.")
         return 0
 
@@ -1033,9 +1032,9 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "instead of removing AI attributions, leave ONLY the AI: "
-            "replace author/committer with the AI default identity, drop "
-            "human Co-Authored-By trailers, and substitute the default AI "
-            "trailer when a commit has no AI attribution at all"
+            "replace author/committer with the AI identity, drop EVERY "
+            "Co-Authored-By trailer, and append the canonical "
+            "'Authored-By: Claude' trailer to every commit"
         ),
     )
     sp_scrub.set_defaults(func=cmd_scrub)

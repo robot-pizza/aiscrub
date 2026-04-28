@@ -85,8 +85,10 @@ aiscrub dirty --attribution-file ./trailer.txt
 
 `scrub --kill-all-humans` skips the file pass and instead rewrites every
 commit on every ref to leave only the AI: `author` and `committer` are set to
-`Claude <noreply@anthropic.com>`, human `Co-Authored-By` trailers are dropped,
-and any commit that was un-attributed gets the default AI trailer appended.
+`Claude <noreply@anthropic.com>`, EVERY `Co-Authored-By` trailer is dropped
+(human or AI — Claude is now the sole author, not a co-author), and the
+canonical `Authored-By: Claude <noreply@anthropic.com>` trailer is appended
+to every commit.
 
 After a real `scrub` or `dirty`, the tool prints the exact
 `git push --force-with-lease` commands to publish, plus a step-by-step playbook
@@ -142,4 +144,4 @@ MIT — see `LICENSE`.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code) 😉
 
-Co-Authored-By: Claude <noreply@anthropic.com>
+Authored-By: Claude <noreply@anthropic.com>
