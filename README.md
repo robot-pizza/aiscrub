@@ -117,19 +117,12 @@ uv sync --extra build
 uv run pyinstaller --onefile --name aiscrub aiscrub.py
 ```
 
-## Commit convention for this repo (ironic)
-
-This project strips AI attributions from other people's repos. Commits to
-**this** repo deliberately keep the attribution, with a winky emoji:
-
-```
-🤖 Generated with [Claude Code](https://claude.com/claude-code) 😉
-
-Co-Authored-By: Claude <noreply@anthropic.com>
-```
-
-Do not remove it. See `CONTRIBUTING.md`.
-
 ## License
 
 MIT — see `LICENSE`.
+
+---
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code) 😉
+
+Co-Authored-By: Claude <noreply@anthropic.com>
