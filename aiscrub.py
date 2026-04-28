@@ -6,6 +6,10 @@ Subcommands:
   scrub  Rewrite history and tracked files to REMOVE AI attributions
          (Claude, Copilot, Cursor, ChatGPT, Aider, Cody, Codeium, Devin,
          Gemini, Tabnine, JetBrains AI, Continue, generic "by AI"...).
+         Pass --kill-all-humans to instead leave ONLY AI attribution:
+         replace author/committer with the AI default identity, drop
+         human Co-Authored-By trailers, and substitute the default AI
+         trailer when a commit has no AI attribution at all.
          Dry-run by default; pass --not-dry-run to actually mutate.
   dirty  Rewrite history to ADD an attribution trailer to every commit
          that does not already have it. Default trailer attributes Claude;
@@ -36,6 +40,14 @@ _LBRACK = r"[\[\(【［]?"                       # optional [ ( 【 ［
 _RBRACK = r"[\]\)】］]?"                       # optional ] ) 】 ］
 _WS = r"[ \t ​]*"                           # space, tab, NBSP, ZWSP
 _BOT = r"(?:\U0001F916|:robot:|:robot_face:)"
+
+AI_AUTHOR_NAME = "Claude"
+AI_AUTHOR_EMAIL = "noreply@anthropic.com"
+
+COAUTHOR_PATTERN = re.compile(
+    rf"^{_WS}Co{_DASH}Authored{_DASH}By{_COLON}.*$",
+    re.IGNORECASE,
+)
 
 CLAUDE_PATTERNS = [
     # Co-authored-by trailer naming Claude.
@@ -209,6 +221,12 @@ def ensure_git_repo() -> Path:
 
 def line_matches(line: str) -> bool:
     return any(p.search(line) for p in COMMIT_LINE_PATTERNS)
+
+
+def line_is_human_coauthor(line: str) -> bool:
+    if not COAUTHOR_PATTERN.match(line):
+        return False
+    return not any(p.search(line) for p in ALL_AI_PATTERNS)
 
 
 def scan_commits() -> list[tuple[str, str, list[str]]]:
@@ -566,6 +584,9 @@ def preview_working_tree(root: Path) -> list[Path]:
 
 
 def cmd_scrub(args: argparse.Namespace) -> int:
+    if args.kill_all_humans:
+        return cmd_kill_all_humans(args)
+
     root = ensure_git_repo()
     os.chdir(root)
 
@@ -719,6 +740,210 @@ def cmd_dirty(args: argparse.Namespace) -> int:
     return 0
 
 
+KILL_WARNING_BANNER = """
+============================================================
+  DESTRUCTIVE OPERATION — REWRITES GIT HISTORY
+============================================================
+This will:
+  * Replace author/committer with the AI default identity
+    (Claude <noreply@anthropic.com>) on EVERY commit.
+  * Drop every human Co-Authored-By trailer.
+  * Append a default AI trailer to any commit that has no
+    AI attribution at all.
+  * Change commit SHAs across the entire repo.
+
+Same consequences as `scrub`: divergent clones, broken open
+PRs, moved tags, lost signatures.
+============================================================
+"""
+
+
+def kill_all_humans_filter_repo() -> None:
+    patterns_literal = _patterns_as_bytes_literal()
+    coauthor_src = repr(COAUTHOR_PATTERN.pattern.encode("utf-8"))
+    default_attribution_bytes = repr(DEFAULT_ATTRIBUTION.encode("utf-8"))
+    script = (
+        "import re\n"
+        f"PATTERNS = {patterns_literal}\n"
+        f"COAUTHOR_RE = re.compile({coauthor_src}, re.IGNORECASE | re.MULTILINE)\n"
+        f"AI_NAME = {AI_AUTHOR_NAME.encode('utf-8')!r}\n"
+        f"AI_EMAIL = {AI_AUTHOR_EMAIL.encode('utf-8')!r}\n"
+        f"DEFAULT_ATTRIBUTION = {default_attribution_bytes}\n"
+        "msg = commit.message\n"
+        "kept = []\n"
+        "has_ai = False\n"
+        "for line in msg.split(b'\\n'):\n"
+        "    is_coauthor = COAUTHOR_RE.match(line) is not None\n"
+        "    is_ai = any(p.search(line) for p in PATTERNS)\n"
+        "    if is_ai:\n"
+        "        has_ai = True\n"
+        "    if is_coauthor and not is_ai:\n"
+        "        continue\n"
+        "    kept.append(line)\n"
+        "msg = b'\\n'.join(kept)\n"
+        "msg = re.sub(rb'\\n{3,}', b'\\n\\n', msg)\n"
+        "if not has_ai:\n"
+        "    msg = msg.rstrip(b'\\n') + b'\\n\\n' + DEFAULT_ATTRIBUTION + b'\\n'\n"
+        "else:\n"
+        "    msg = msg.rstrip(b'\\n') + b'\\n'\n"
+        "commit.message = msg\n"
+        "commit.author_name = AI_NAME\n"
+        "commit.author_email = AI_EMAIL\n"
+        "commit.committer_name = AI_NAME\n"
+        "commit.committer_email = AI_EMAIL\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
+        f.write(script)
+        callback_path = f.name
+    try:
+        cmd = [
+            "git", "filter-repo", "--force",
+            "--commit-callback", Path(callback_path).read_text(encoding="utf-8"),
+        ]
+        r = subprocess.run(cmd, text=True)
+        if r.returncode != 0:
+            sys.exit("error: git filter-repo failed")
+    finally:
+        os.unlink(callback_path)
+
+
+def kill_all_humans_filter_branch() -> None:
+    patterns_literal = _patterns_as_bytes_literal()
+    coauthor_src = repr(COAUTHOR_PATTERN.pattern.encode("utf-8"))
+    default_attribution_bytes = repr(DEFAULT_ATTRIBUTION.encode("utf-8"))
+    helper_src = (
+        "import sys, re\n"
+        f"PATTERNS = {patterns_literal}\n"
+        f"COAUTHOR_RE = re.compile({coauthor_src}, re.IGNORECASE | re.MULTILINE)\n"
+        f"DEFAULT_ATTRIBUTION = {default_attribution_bytes}\n"
+        "data = sys.stdin.buffer.read()\n"
+        "kept = []\n"
+        "has_ai = False\n"
+        "for line in data.split(b'\\n'):\n"
+        "    is_coauthor = COAUTHOR_RE.match(line) is not None\n"
+        "    is_ai = any(p.search(line) for p in PATTERNS)\n"
+        "    if is_ai:\n"
+        "        has_ai = True\n"
+        "    if is_coauthor and not is_ai:\n"
+        "        continue\n"
+        "    kept.append(line)\n"
+        "data = b'\\n'.join(kept)\n"
+        "data = re.sub(rb'\\n{3,}', b'\\n\\n', data)\n"
+        "if not has_ai:\n"
+        "    data = data.rstrip(b'\\n') + b'\\n\\n' + DEFAULT_ATTRIBUTION + b'\\n'\n"
+        "else:\n"
+        "    data = data.rstrip(b'\\n') + b'\\n'\n"
+        "sys.stdout.buffer.write(data)\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
+        f.write(helper_src)
+        helper_path = f.name
+    msg_filter = f'"{sys.executable}" "{helper_path}"'
+    env_filter = (
+        f'GIT_AUTHOR_NAME="{AI_AUTHOR_NAME}"; '
+        f'GIT_AUTHOR_EMAIL="{AI_AUTHOR_EMAIL}"; '
+        f'GIT_COMMITTER_NAME="{AI_AUTHOR_NAME}"; '
+        f'GIT_COMMITTER_EMAIL="{AI_AUTHOR_EMAIL}"; '
+        "export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL"
+    )
+    env = dict(os.environ)
+    env["FILTER_BRANCH_SQUELCH_WARNING"] = "1"
+    try:
+        r = subprocess.run(
+            [
+                "git", "filter-branch", "-f",
+                "--env-filter", env_filter,
+                "--msg-filter", msg_filter,
+                "--", "--all",
+            ],
+            env=env,
+        )
+        if r.returncode != 0:
+            sys.exit("error: git filter-branch failed")
+    finally:
+        os.unlink(helper_path)
+
+
+def cmd_kill_all_humans(args: argparse.Namespace) -> int:
+    root = ensure_git_repo()
+    os.chdir(root)
+
+    dry_run = not args.not_dry_run
+    ai_author_str = f"{AI_AUTHOR_NAME} <{AI_AUTHOR_EMAIL}>"
+
+    sep = "<<<COMMIT-BOUNDARY>>>"
+    fmt = f"%H%n%an <%ae>%n%s%n%B%n{sep}"
+    r = run(["git", "log", "--all", f"--pretty=format:{fmt}"])
+
+    affected = []
+    for chunk in r.stdout.split(sep + "\n"):
+        chunk = chunk.strip("\n")
+        if not chunk:
+            continue
+        lines = chunk.split("\n")
+        if len(lines) < 3:
+            continue
+        sha = lines[0]
+        author = lines[1]
+        subject = lines[2]
+        body_lines = lines[3:]
+
+        human_coauthors = [ln for ln in body_lines if line_is_human_coauthor(ln)]
+        has_ai = any(line_matches(ln) for ln in body_lines)
+        author_changes = author != ai_author_str
+
+        if author_changes or human_coauthors or not has_ai:
+            affected.append({
+                "sha": sha,
+                "author": author,
+                "subject": subject,
+                "human_coauthors": human_coauthors,
+                "has_ai": has_ai,
+                "author_changes": author_changes,
+            })
+
+    if dry_run:
+        print("DRY RUN — no changes will be written. Pass --not-dry-run to apply.\n")
+        print(f"would rewrite {len(affected)} commit(s) to leave only AI attribution:\n")
+        for c in affected:
+            print(f"  {c['sha'][:12]} {c['subject']}")
+            if c['author_changes']:
+                print(f"      author: {c['author']} -> {ai_author_str}")
+            for ln in c['human_coauthors']:
+                print(f"      drop:   {ln}")
+            if not c['has_ai']:
+                print(f"      add:    {attribution_signature(DEFAULT_ATTRIBUTION)}")
+        print("\nRe-run with --not-dry-run to apply.")
+        return 0
+
+    if not affected:
+        print("nothing to do: every commit already has AI-only attribution.")
+        return 0
+
+    if working_tree_dirty():
+        sys.exit("error: working tree has uncommitted changes; commit or stash first")
+
+    print(KILL_WARNING_BANNER)
+    if not args.yes:
+        ans = input("Type 'REWRITE' to proceed: ").strip()
+        if ans != "REWRITE":
+            print("aborted")
+            return 1
+
+    print(f"\nrewriting {len(affected)} commit(s) to leave only AI attribution...")
+    if have_filter_repo():
+        print("  using git-filter-repo")
+        kill_all_humans_filter_repo()
+    else:
+        print("  git-filter-repo not found; falling back to git filter-branch")
+        print("  (install git-filter-repo for a faster, safer rewrite)")
+        kill_all_humans_filter_branch()
+
+    print("\ndone")
+    print(PUSH_INSTRUCTIONS)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="aiscrub",
@@ -748,6 +973,14 @@ def main(argv: list[str] | None = None) -> int:
             "  aiscrub dirty --attribution-file ./trailer.txt\n"
             "      Use a custom attribution block from a file instead of\n"
             "      the default Claude trailer.\n"
+            "\n"
+            "  aiscrub scrub --kill-all-humans\n"
+            "      Dry-run preview of replacing every human attribution\n"
+            "      with the AI default.\n"
+            "\n"
+            "  aiscrub scrub --kill-all-humans --not-dry-run\n"
+            "      DESTRUCTIVE: rewrite every commit to leave only AI\n"
+            "      attribution (author, committer, trailers).\n"
         ),
     )
     parser.add_argument(
@@ -794,6 +1027,16 @@ def main(argv: list[str] | None = None) -> int:
         "--yes",
         action="store_true",
         help="skip the interactive 'REWRITE' confirmation prompt",
+    )
+    sp_scrub.add_argument(
+        "--kill-all-humans",
+        action="store_true",
+        help=(
+            "instead of removing AI attributions, leave ONLY the AI: "
+            "replace author/committer with the AI default identity, drop "
+            "human Co-Authored-By trailers, and substitute the default AI "
+            "trailer when a commit has no AI attribution at all"
+        ),
     )
     sp_scrub.set_defaults(func=cmd_scrub)
 
