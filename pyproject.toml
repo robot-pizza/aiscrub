@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiscrub"
+version = "0.1.0"
+description = "Find and remove AI attributions from a git repo (commit messages and tracked files), or ironically add them."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "aiscrub contributors" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+dependencies = []
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0"]
+
+[project.scripts]
+aiscrub = "aiscrub:main"
+
+[project.urls]
+Homepage = "https://github.com/OWNER/aiscrub"
+Issues = "https://github.com/OWNER/aiscrub/issues"
+
+[tool.setuptools]
+py-modules = ["aiscrub"]
+
+[tool.uv]
+dev-dependencies = ["pyinstaller>=6.0"]

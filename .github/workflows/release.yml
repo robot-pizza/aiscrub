@@ -1,0 +1,115 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.1.0). Required for manual runs."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_name: aiscrub-linux-x86_64
+            bin_name: aiscrub
+          - os: macos-latest
+            asset_name: aiscrub-macos-arm64
+            bin_name: aiscrub
+          - os: windows-latest
+            asset_name: aiscrub-windows-x86_64
+            bin_name: aiscrub.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dev environment (PyInstaller)
+        run: uv sync --extra build
+
+      - name: Build binary with PyInstaller
+        shell: bash
+        run: |
+          uv run pyinstaller \
+            --onefile \
+            --name aiscrub \
+            --console \
+            aiscrub.py
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          mkdir -p staging
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp dist/aiscrub.exe staging/${{ matrix.bin_name }}
+          else
+            cp dist/aiscrub staging/${{ matrix.bin_name }}
+            chmod +x staging/${{ matrix.bin_name }}
+          fi
+          cp README.md staging/ 2>/dev/null || true
+          cp LICENSE staging/ 2>/dev/null || true
+
+      - name: Zip asset (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cd staging
+          zip -r ../${{ matrix.asset_name }}.zip .
+
+      - name: Zip asset (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path staging\* -DestinationPath ${{ matrix.asset_name }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}.zip
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Compute checksums
+        run: |
+          cd artifacts
+          find . -name "*.zip" -exec sha256sum {} \; | sed 's|\./[^/]*/||' > ../SHA256SUMS.txt
+          cat ../SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.zip
+            SHA256SUMS.txt
